@@ -9,21 +9,26 @@ import init, {
     list_all_minecraft_versions,
     supports_forge,
     supports_neoforge,
+    arch_api_supports_forge,
     to_mod_id,
     validate_mod_id
 } from "./templateer.js";
 await init();
 
-const state = create_state();
+const versionList = JSON.parse(await list_all_minecraft_versions());
+const state = create_state(versionList);
+const versionsByName = {};
 
 // Set up Minecraft version dropdown with contents
 const mcSelect = document.getElementById("minecraft-version-select");
 mcSelect.onchange = refreshAvailablePlatforms;
 
-for (const version of list_all_minecraft_versions().reverse()) {
+for (const versionMetadata of versionList.versions.reverse()) {
     const option = document.createElement("option");
-    option.textContent = version;
+    option.textContent = versionMetadata.version;
     mcSelect.appendChild(option);
+
+    versionsByName[versionMetadata.version] = versionMetadata;
 }
 
 // Hide multiplatform settings when deselected
@@ -34,6 +39,10 @@ const multiplatformSettings = document.getElementById("multiplatform-settings");
 for (const input of projectTypeToggles) {
     input.onchange = refreshDisplayedProjectType;
 };
+
+// Add listeners to Forge checkboxes for controlling the Architectury API checkbox.
+document.getElementById("forge-loader-input").onchange = refreshArchitecturySupport;
+refreshArchitecturySupport();
 
 // Add listeners to Fabric and Quilt checkboxes for controlling the Fabric-like checkbox,
 // and refresh the Fabric-like status according to the default state.
@@ -109,7 +118,7 @@ function updateState() {
     state.subprojects.neoforge = document.getElementById("neoforge-loader-input").checked && isNeoForgeAvailable();
     state.subprojects.quilt = document.getElementById("quilt-loader-input").checked;
     state.subprojects.fabric_likes = document.getElementById("fabric-like-input").checked && isFabricLikeAvailable();
-    state.dependencies.architectury_api = document.getElementById("architectury-api-input").checked;
+    state.dependencies.architectury_api = document.getElementById("architectury-api-input").checked && isArchitecturyApiAvailable();
 }
 
 function showError(error) {
@@ -140,17 +149,27 @@ function isFabricLikeAvailable() {
 
 function isNeoForgeAvailable() {
     const version = mcSelect.value;
-    return supports_neoforge(version);
+    return supports_neoforge(versionsByName[version]);
 }
 
 function isForgeAvailable() {
     const version = mcSelect.value;
-    return supports_forge(version);
+    return supports_forge(versionsByName[version]);
+}
+
+function isArchitecturyApiAvailable() {
+    const version = mcSelect.value;
+    if (document.getElementById("forge-loader-input").checked) {
+        return arch_api_supports_forge(versionsByName[version]);
+    } else {
+        return true;
+    }
 }
 
 function refreshAvailablePlatforms() {
     refreshForgeLikePlatform(isNeoForgeAvailable(), "neoforge");
     refreshForgeLikePlatform(isForgeAvailable(), "forge");
+    refreshArchitecturySupport();
 }
 
 function refreshForgeLikePlatform(available, id) {
@@ -167,11 +186,23 @@ function refreshForgeLikePlatform(available, id) {
     }
 }
 
+function refreshArchitecturySupport() {
+    if (!isArchitecturyApiAvailable()) {
+        document.getElementById("architectury-api-input").disabled = true;
+    } else {
+        document.getElementById("architectury-api-input").disabled = false;
+    }
+};
+
 // Enables/disables the Fabric-like checkbox based on whether it can be selected for the current state.
 function refreshFabricLikeCheckbox() {
     const hasFabricLike = isFabricLikeAvailable();
     const fabricLikeInput = document.getElementById("fabric-like-input");
     fabricLikeInput.disabled = !hasFabricLike;
+}
+
+function isLoaderChecked() {
+    return document.getElementById("fabric-loader-input").checked || document.getElementById("forge-loader-input").checked || document.getElementById("neoforge-loader-input").checked || document.getElementById("quilt-loader-input").checked
 }
 
 document.getElementById("generate-button").onclick = async () => {
@@ -186,10 +217,13 @@ document.getElementById("generate-button").onclick = async () => {
     } else if (state.package_name === "") {
         showError("Package name is empty");
         return;
+    } else if (!isLoaderChecked() && multiplatformInput.checked) {
+        showError("You need to choose at least one subproject first!")
+        return
     }
 
     clearError();
-    await generate(state);
+    await generate(state, versionList);
 };
 
 // Apply initial state
